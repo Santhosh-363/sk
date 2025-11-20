@@ -1,72 +1,42 @@
-# (c) @RoyalKrrishna
+# Fully Corrected main.py for Render Deployment (BOT mode only)
 
-from os import link
-from telethon import Button
+from telethon import TelegramClient, events, Button
 from configs import Config
-from pyrogram import Client, idle
 import asyncio
-from telethon import TelegramClient
-from telethon.sessions import StringSession
-from plugins.tgraph import *
-from helpers import *
-from telethon import TelegramClient, events
 import urllib.parse
 from telethon.errors import UserNotParticipantError
 from telethon.tl.functions.channels import GetParticipantRequest
+from plugins.tgraph import *
+from helpers import *
 
-tbot = TelegramClient('mdisktelethonbot', Config.API_ID, Config.API_HASH).start(bot_token=Config.BOT_TOKEN)
-client = TelegramClient(StringSession( Config.USER_SESSION_STRING), Config.API_ID, Config.API_HASH)
+# Start bot client ONLY (No user session)
+tbot = TelegramClient(
+    Config.BOT_SESSION_NAME,
+    Config.API_ID,
+    Config.API_HASH
+).start(bot_token=Config.BOT_TOKEN)
 
-if Config.REPLIT:
-    from threading import Thread
+print()
+print("-------------------- Initializing Telegram Bot --------------------")
+print()
 
-    from flask import Flask, jsonify
-    
-    app = Flask('')
-    
-    @app.route('/')
-    def main():
-        res = {
-            "status":"running",
-            "hosted":"replit.com",
-            "repl":Config.REPLIT,
-        }
-        
-        return jsonify(res)
-
-    def run():
-      app.run(host="0.0.0.0", port=8000)
-    
-    def keep_alive():
-      server = Thread(target=run)
-      server.start()
-
-async def ping_server():
-    sleep_time = Config.PING_INTERVAL
-    while True:
-        await asyncio.sleep(sleep_time)
-        try:
-            async with aiohttp.ClientSession(timeout=aiohttp.ClientTimeout(total=10)) as session:
-                async with session.get(Config.REPLIT) as resp:
-                    logging.info(f"Pinged server with response: {resp.status}")
-        except TimeoutError:
-            logging.warning("Couldn't connect to the site URL..!")
-        except Exception:
-            traceback.print_exc()
-
+# ---------------------------- Force Sub -----------------------------
 
 async def get_user_join(id):
     if Config.FORCE_SUB == "False":
         return True
 
-    ok = True
     try:
-        await tbot(GetParticipantRequest(channel=int(Config.UPDATES_CHANNEL), participant=id))
-        ok = True
+        await tbot(GetParticipantRequest(
+            channel=int(Config.UPDATES_CHANNEL),
+            participant=id
+        ))
+        return True
     except UserNotParticipantError:
-        ok = False
-    return ok
+        return False
 
+
+# -------------------------- Message Handler --------------------------
 
 @tbot.on(events.NewMessage(incoming=True))
 async def message_handler(event):
@@ -74,169 +44,465 @@ async def message_handler(event):
     if event.message.post:
         return
 
-    print("\n")
-    print("Message Received: " + event.text)
-    # if event.is_channel:return
-    if event.text.startswith("/"):return
+    if event.text.startswith("/"):
+        return
 
-    # Force Subscription
-    if  not await get_user_join(event.sender_id):
-        haha = await event.reply(f'''**Hey! {event.sender.first_name} 😃**
-
-**You Have To Join Our Update Channel To Use Me ✅**
-
-**Click Bellow Button To Join Now.👇🏻**''', buttons=Button.url('🍿Updates Channel🍿', f'https://t.me/{Config.UPDATES_CHANNEL_USERNAME}'))
+    # Force Sub
+    if not await get_user_join(event.sender_id):
+        haha = await event.reply(
+            f"**Hey {event.sender.first_name} 😃**\n\n"
+            f"**You must join our update channel to use me!**",
+            buttons=Button.url(
+                "🍿 Updates Channel 🍿",
+                f"https://t.me/{Config.UPDATES_CHANNEL_USERNAME}"
+            )
+        )
         await asyncio.sleep(Config.AUTO_DELETE_TIME)
         return await haha.delete()
 
-    
-    print("Group: " + str(event.is_group))
-    print("Channel: " + str(event.is_channel))
-    args = event.text
-    args = await validate_q(args)
-
-    print("Search Query: {args}".format(args=args))
-    print("\n")
-    
-    if not args:
+    query = event.text.strip()
+    if not query:
         return
 
-    txt = await event.reply('**Searching For "{}" 🔍**'.format(event.text))
+    txt = await event.reply(f"**Searching for `{query}` 🔍**")
 
     try:
         search = []
-        async for i in AsyncIter(args.split()):
-            search_msg = client.iter_messages(Config.CHANNEL_ID, limit=5, search=i)
-            search.append(search_msg)
+
+        # Search using BOT instead of USER client
+        async for word in AsyncIter(query.split()):
+            msgs = tbot.iter_messages(
+                Config.CHANNEL_ID,
+                limit=5,
+                search=word
+            )
+            search.append(msgs)
 
         username = Config.UPDATES_CHANNEL_USERNAME
-        answer = f'**Join** [@{username}](https://telegram.me/{username}) \n\n'
+        answer = f"**Join** [@{username}](https://telegram.me/{username})\n\n"
 
         c = 0
 
+        # Extract results
         async for msg_list in AsyncIter(search):
             async for msg in msg_list:
                 c += 1
                 f_text = msg.text.replace("*", "")
-
-  #              if event.is_group or event.is_channel:
-  #                 f_text = await group_link_convertor(event.chat_id, f_text)
-
                 f_text = await link_to_hyperlink(f_text)
-                answer += f'\n\n**✅ PAGE {c}:**\n\n━━━━━━━━━\n\n' + '' + f_text.split("\n", 1)[0] + '' + '\n\n' + '' + f_text.split("\n", 2)[
-                    -1] 
-                
-            # break
-        finalsearch = []
-        async for msg in AsyncIter(search):
-            finalsearch.append(msg)
+
+                answer += (
+                    f"\n\n**✅ PAGE {c}:**\n\n━━━━━━━━━\n\n" +
+                    f_text.split("\n", 1)[0] +
+                    "\n\n" +
+                    f_text.split("\n", 1)[-1]
+                )
 
         if c <= 0:
-            answer = f'''**No Results Found For {event.text}**
-
-**Type Only Movie Name 💬**
-**Check Spelling On** [Google](http://www.google.com/search?q={event.text.replace(' ', '%20')}%20Movie) 🔍
-'''
-
-            newbutton = [Button.url('Click To Check Spelling ✅',
-                                    f'http://www.google.com/search?q={event.text.replace(" ", "%20")}%20Movie')], [
-                            Button.url('Click To Check Release Date 📅',
-                                    f'http://www.google.com/search?q={event.text.replace(" ", "%20")}%20Movie%20Release%20Date')], [
-                            Button.url('👉 Search Here 👈',
-                                    f'https://amzn.to/3ykSzxC')]
             await txt.delete()
-            result = await event.reply(answer, buttons=newbutton, link_preview=False)
+            res = await event.reply(
+                f"**No results found for `{query}`**",
+                buttons=[[Button.url(
+                    "Check on Google 🔍",
+                    f"http://google.com/search?q={query.replace(' ', '%20')}"
+                )]],
+                link_preview=False
+            )
             await asyncio.sleep(Config.AUTO_DELETE_TIME)
-            await event.delete()
-            return await result.delete()
-        else:
-            pass
+            return await res.delete()
 
-        answer += f"\n\n**Uploaded By @{Config.UPDATES_CHANNEL_USERNAME}**"
+        # Telegraph Page
+        answer += f"\n\n**Uploaded By @{username}**"
         answer = await replace_username(answer)
-        html_content = await markdown_to_html(answer)
-        html_content = await make_bold(html_content)
-        tgraph_result = await telegraph_handler(
-            html=html_content,
-            title=event.text,
+        html_page = await markdown_to_html(answer)
+        html_page = await make_bold(html_page)
+
+        tgraph_link = await telegraph_handler(
+            html=html_page,
+            title=query,
             author=Config.BOT_USERNAME
         )
-        message = f'**Click Here 👇 For "{event.text}"**\n\n[🍿🎬 {str(event.text).upper()}\n🍿🎬 {str("Click me for results").upper()}]({tgraph_result})'
-        button =  [Button.url('❓How To Open Link❓',
-                                    f'https://t.me/iP_Update/8')], [
-                            Button.url('👉 Search Here 👈',
-                                    f'https://amzn.to/3MmfpIu')]
 
-        await txt.delete()
-        result = await event.reply(message, buttons=button, link_preview=False)
-        await asyncio.sleep(Config.AUTO_DELETE_TIME)
-        await event.delete()
-        return await result.delete()
-
-    except Exception as e:
-        print(e)
-        await txt.delete()
-        result = await event.reply("**Some Error While Searching...‼️\n\nReport @RoyalKrrishn 🥷**")
-        await asyncio.sleep(Config.AUTO_DELETE_TIME)
-        await event.delete() 
-        return await result.delete()
-
-
-async def escape_url(str):
-    escape_url = urllib.parse.quote(str)
-    return escape_url
-
-
-# Bot Client for Inline Search
-class Bot(Client):
-
-    def __init__(self):
-        super().__init__(
-        Config.BOT_SESSION_NAME,
-        api_id=Config.API_ID,
-        api_hash=Config.API_HASH,
-        bot_token=Config.BOT_TOKEN,
-        plugins=dict(root="plugins")
+        final_msg = (
+            f"**Click Here 👇 For `{query}`**\n\n"
+            f"[🍿🎬 {query.upper()}]\n({tgraph_link})"
         )
 
-    def start(self):
-        if Config.REPLIT:
-            keep_alive()
-            # ping_server()
-        super().start()
-        print('Bot started')
+        await txt.delete()
+        res = await event.reply(
+            final_msg,
+            buttons=[[Button.url("❓How To Open❓", "https://t.me/iP_Update/8")]],
+            link_preview=False
+        )
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
 
-    def stop(self, *args):
-        super().stop()
-        print('Bot Stopped Bye')
+    except Exception as e:
+        print("Error:", e)
+        await txt.delete()
+        res = await event.reply("**Error while searching!**")
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+
+# -------------------------- Start Bot --------------------------
+
+print("Bot Started Successfully!")
+print()
+print(f"Join @{Config.UPDATES_CHANNEL_USERNAME}")
+
+tbot.run_until_disconnected()
+# Fully Corrected main.py for Render Deployment (BOT mode only)
+
+from telethon import TelegramClient, events, Button
+from configs import Config
+import asyncio
+import urllib.parse
+from telethon.errors import UserNotParticipantError
+from telethon.tl.functions.channels import GetParticipantRequest
+from plugins.tgraph import *
+from helpers import *
+
+# Start bot client ONLY (No user session)
+tbot = TelegramClient(
+    Config.BOT_SESSION_NAME,
+    Config.API_ID,
+    Config.API_HASH
+).start(bot_token=Config.BOT_TOKEN)
 
 print()
 print("-------------------- Initializing Telegram Bot --------------------")
-# Start Clients
-
-tg_app = Bot()
-tg_app.start()
-
-print("------------------------------------------------------------------")
 print()
-print(f"""
- _____________________________________________   
-|                                             |  
-|          Deployed Successfully              |  
-|              Join @{Config.UPDATES_CHANNEL_USERNAME}                 |
-|_____________________________________________|
-    """)
 
-# User.start()
-with tbot, client:
-    tbot.run_until_disconnected()
-    client.run_until_disconnected()
+# ---------------------------- Force Sub -----------------------------
 
-# Loop Clients till Disconnects
-idle()
-# After Disconnects,
-# Stop Clients
+async def get_user_join(id):
+    if Config.FORCE_SUB == "False":
+        return True
+
+    try:
+        await tbot(GetParticipantRequest(
+            channel=int(Config.UPDATES_CHANNEL),
+            participant=id
+        ))
+        return True
+    except UserNotParticipantError:
+        return False
+
+
+# -------------------------- Message Handler --------------------------
+
+@tbot.on(events.NewMessage(incoming=True))
+async def message_handler(event):
+
+    if event.message.post:
+        return
+
+    if event.text.startswith("/"):
+        return
+
+    # Force Sub
+    if not await get_user_join(event.sender_id):
+        haha = await event.reply(
+            f"**Hey {event.sender.first_name} 😃**\n\n"
+            f"**You must join our update channel to use me!**",
+            buttons=Button.url(
+                "🍿 Updates Channel 🍿",
+                f"https://t.me/{Config.UPDATES_CHANNEL_USERNAME}"
+            )
+        )
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        return await haha.delete()
+
+    query = event.text.strip()
+    if not query:
+        return
+
+    txt = await event.reply(f"**Searching for `{query}` 🔍**")
+
+    try:
+        search = []
+
+        # Search using BOT instead of USER client
+        async for word in AsyncIter(query.split()):
+            msgs = tbot.iter_messages(
+                Config.CHANNEL_ID,
+                limit=5,
+                search=word
+            )
+            search.append(msgs)
+
+        username = Config.UPDATES_CHANNEL_USERNAME
+        answer = f"**Join** [@{username}](https://telegram.me/{username})\n\n"
+
+        c = 0
+
+        # Extract results
+        async for msg_list in AsyncIter(search):
+            async for msg in msg_list:
+                c += 1
+                f_text = msg.text.replace("*", "")
+                f_text = await link_to_hyperlink(f_text)
+
+                answer += (
+                    f"\n\n**✅ PAGE {c}:**\n\n━━━━━━━━━\n\n" +
+                    f_text.split("\n", 1)[0] +
+                    "\n\n" +
+                    f_text.split("\n", 1)[-1]
+                )
+
+        if c <= 0:
+            await txt.delete()
+            res = await event.reply(
+                f"**No results found for `{query}`**",
+                buttons=[[Button.url(
+                    "Check on Google 🔍",
+                    f"http://google.com/search?q={query.replace(' ', '%20')}"
+                )]],
+                link_preview=False
+            )
+            await asyncio.sleep(Config.AUTO_DELETE_TIME)
+            return await res.delete()
+
+        # Telegraph Page
+        answer += f"\n\n**Uploaded By @{username}**"
+        answer = await replace_username(answer)
+        html_page = await markdown_to_html(answer)
+        html_page = await make_bold(html_page)
+
+        tgraph_link = await telegraph_handler(
+            html=html_page,
+            title=query,
+            author=Config.BOT_USERNAME
+        )
+
+        final_msg = (
+            f"**Click Here 👇 For `{query}`**\n\n"
+            f"[🍿🎬 {query.upper()}]\n({tgraph_link})"
+        )
+
+        await txt.delete()
+        res = await event.reply(
+            final_msg,
+            buttons=[[Button.url("❓How To Open❓", "https://t.me/iP_Update/8")]],
+            link_preview=False
+        )
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+    except Exception as e:
+        print("Error:", e)
+        await txt.delete()
+        res = await event.reply("**Error while searching!**")
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+
+# -------------------------- Start Bot --------------------------
+
+print("Bot Started Successfully!")
 print()
-print("------------------------ Stopped Services ------------------------")
-Bot.stop()
-# User.stop()
+print(f"Join @{Config.UPDATES_CHANNEL_USERNAME}")
+
+tbot.run_until_disconnected()
+            # Telegraph Page
+        answer += f"\n\n**Uploaded By @{username}**"
+        answer = await replace_username(answer)
+        html_page = await markdown_to_html(answer)
+        html_page = await make_bold(html_page)
+
+        tgraph_link = await telegraph_handler(
+            html=html_page,
+            title=query,
+            author=Config.BOT_USERNAME
+        )
+
+        final_msg = (
+            f"**Click Here 👇 For `{query}`**\n\n"
+            f"[🍿🎬 {query.upper()}]\n({tgraph_link})"
+        )
+
+        await txt.delete()
+        res = await event.reply(
+            final_msg,
+            buttons=[[Button.url("❓How To Open❓", "https://t.me/iP_Update/8")]],
+            link_preview=False
+        )
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+    except Exception as e:
+        print("Error:", e)
+        await txt.delete()
+        res = await event.reply("**Error while searching!**")
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+
+# -------------------------- Start Bot --------------------------
+
+print("Bot Started Successfully!")
+print()# Fully Corrected main.py for Render Deployment (BOT mode only)
+
+from telethon import TelegramClient, events, Button
+from configs import Config
+import asyncio
+import urllib.parse
+from telethon.errors import UserNotParticipantError
+from telethon.tl.functions.channels import GetParticipantRequest
+from plugins.tgraph import *
+from helpers import *
+
+# Start bot client ONLY (No user session)
+tbot = TelegramClient(
+    Config.BOT_SESSION_NAME,
+    Config.API_ID,
+    Config.API_HASH
+).start(bot_token=Config.BOT_TOKEN)
+
+print()
+print("-------------------- Initializing Telegram Bot --------------------")
+print()
+
+# ---------------------------- Force Sub -----------------------------
+
+async def get_user_join(id):
+    if Config.FORCE_SUB == "False":
+        return True
+
+    try:
+        await tbot(GetParticipantRequest(
+            channel=int(Config.UPDATES_CHANNEL),
+            participant=id
+        ))
+        return True
+    except UserNotParticipantError:
+        return False
+
+
+# -------------------------- Message Handler --------------------------
+
+@tbot.on(events.NewMessage(incoming=True))
+async def message_handler(event):
+
+    if event.message.post:
+        return
+
+    if event.text.startswith("/"):
+        return
+
+    # Force Sub
+    if not await get_user_join(event.sender_id):
+        haha = await event.reply(
+            f"**Hey {event.sender.first_name} 😃**\n\n"
+            f"**You must join our update channel to use me!**",
+            buttons=Button.url(
+                "🍿 Updates Channel 🍿",
+                f"https://t.me/{Config.UPDATES_CHANNEL_USERNAME}"
+            )
+        )
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        return await haha.delete()
+
+    query = event.text.strip()
+    if not query:
+        return
+
+    txt = await event.reply(f"**Searching for `{query}` 🔍**")
+
+    try:
+        search = []
+
+        # Search using BOT instead of USER client
+        async for word in AsyncIter(query.split()):
+            msgs = tbot.iter_messages(
+                Config.CHANNEL_ID,
+                limit=5,
+                search=word
+            )
+            search.append(msgs)
+
+        username = Config.UPDATES_CHANNEL_USERNAME
+        answer = f"**Join** [@{username}](https://telegram.me/{username})\n\n"
+
+        c = 0
+
+        # Extract results
+        async for msg_list in AsyncIter(search):
+            async for msg in msg_list:
+                c += 1
+                f_text = msg.text.replace("*", "")
+                f_text = await link_to_hyperlink(f_text)
+
+                answer += (
+                    f"\n\n**✅ PAGE {c}:**\n\n━━━━━━━━━\n\n" +
+                    f_text.split("\n", 1)[0] +
+                    "\n\n" +
+                    f_text.split("\n", 1)[-1]
+                )
+
+        if c <= 0:
+            await txt.delete()
+            res = await event.reply(
+                f"**No results found for `{query}`**",
+                buttons=[[Button.url(
+                    "Check on Google 🔍",
+                    f"http://google.com/search?q={query.replace(' ', '%20')}"
+                )]],
+                link_preview=False
+            )
+            await asyncio.sleep(Config.AUTO_DELETE_TIME)
+            return await res.delete()
+
+        # Telegraph Page
+        answer += f"\n\n**Uploaded By @{username}**"
+        answer = await replace_username(answer)
+        html_page = await markdown_to_html(answer)
+        html_page = await make_bold(html_page)
+
+        tgraph_link = await telegraph_handler(
+            html=html_page,
+            title=query,
+            author=Config.BOT_USERNAME
+        )
+
+        final_msg = (
+            f"**Click Here 👇 For `{query}`**\n\n"
+            f"[🍿🎬 {query.upper()}]\n({tgraph_link})"
+        )
+
+        await txt.delete()
+        res = await event.reply(
+            final_msg,
+            buttons=[[Button.url("❓How To Open❓", "https://t.me/iP_Update/8")]],
+            link_preview=False
+        )
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+    except Exception as e:
+        print("Error:", e)
+        await txt.delete()
+        res = await event.reply("**Error while searching!**")
+        await asyncio.sleep(Config.AUTO_DELETE_TIME)
+        await event.delete()
+        return await res.delete()
+
+
+# -------------------------- Start Bot --------------------------
+
+print("Bot Started Successfully!")
+print()
+print(f"Join @{Config.UPDATES_CHANNEL_USERNAME}")
+
+tbot.run_until_disconnected()
+
+print(f"Join @{Config.UPDATES_CHANNEL_USERNAME}")
+
+tbot.run_until_disconnected()
